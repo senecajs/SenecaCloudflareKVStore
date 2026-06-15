@@ -1,248 +1,234 @@
 /* Copyright © 2024 Seneca Project Contributors, MIT License. */
 
-require('dotenv').config({ path: '.env.local' })
-// console.log(process.env) // remove this
-
-
 import Seneca from 'seneca'
-// import SenecaMsgTest from 'seneca-msg-test'
-// import { Maintain } from '@seneca/maintain'
+import { Miniflare } from 'miniflare'
 
-import OpensearchStoreDoc from '../src/OpensearchStoreDoc'
-import OpensearchStore from '../src/OpensearchStore'
+import CloudflareKVStoreDoc from '../src/CloudflareKVStoreDoc'
+import CloudflareKVStore from '../src/CloudflareKVStore'
 
-
-
-describe('OpensearchStore', () => {
+describe('CloudflareKVStore', () => {
   test('load-plugin', async () => {
-    expect(OpensearchStore).toBeDefined()
-    expect(OpensearchStoreDoc).toBeDefined()
+    expect(CloudflareKVStore).toBeDefined()
+    expect(CloudflareKVStoreDoc).toBeDefined()
+
+    const mf = await makeMiniflare()
+    const binding = await mf.getKVNamespace('TEST_KV')
 
     const seneca = Seneca({ legacy: false })
       .test()
       .use('promisify')
       .use('entity')
-      .use(OpensearchStore)
+      .use(CloudflareKVStore, { kv: { binding } })
+
     await seneca.ready()
 
-    expect(seneca.export('OpensearchStore/native')).toBeDefined()
+    expect(seneca.export('CloudflareKVStore/native')).toBeDefined()
+
+    await mf.dispose()
   })
 
+  test('utils.resolveKeyPrefix', () => {
+    const utils = CloudflareKVStore['utils']
+    const resolveKeyPrefix = utils.resolveKeyPrefix
+    const resolveKey = utils.resolveKey
 
-  test('utils.resolveIndex', () => {
-    const utils = OpensearchStore['utils']
-    const resolveIndex = utils.resolveIndex
-    const seneca = makeSeneca()
+    const seneca = Seneca({ legacy: false }).test().use('entity')
     const ent0 = seneca.make('foo')
     const ent1 = seneca.make('foo/bar')
 
-    expect(resolveIndex(ent0, { index: {} })).toEqual('foo')
-    expect(resolveIndex(ent0, { index: { exact: 'qaz' } })).toEqual('qaz')
+    expect(resolveKeyPrefix(ent0, { prefix: '', suffix: '' })).toEqual('foo')
+    expect(resolveKeyPrefix(ent1, { prefix: '', suffix: '' })).toEqual(
+      'foo/bar',
+    )
 
-    expect(resolveIndex(ent1, { index: {} })).toEqual('foo_bar')
-    expect(resolveIndex(ent1, { index: { prefix: 'p0', suffix: 's0' } })).toEqual('p0_foo_bar_s0')
-    expect(resolveIndex(ent1, {
-      index: { map: { '-/foo/bar': 'FOOBAR' }, prefix: 'p0', suffix: 's0' }
-    }))
-      .toEqual('FOOBAR')
-  }, 22222)
+    expect(resolveKeyPrefix(ent1, { prefix: 'p0', suffix: 's0' })).toEqual(
+      'p0/foo/bar/s0',
+    )
 
+    expect(
+      resolveKeyPrefix(ent1, {
+        map: { '-/foo/bar': 'FOOBAR' },
+        prefix: 'p0',
+        suffix: 's0',
+      }),
+    ).toEqual('FOOBAR')
 
-  test('insert-remove', async () => {
-    const seneca = await makeSeneca()
-    await seneca.ready()
+    expect(resolveKey(ent0, 'i0', { prefix: '', suffix: '' })).toEqual('foo/i0')
+  })
 
+  describe('crud', () => {
+    let mf: Miniflare
+    let seneca: any
 
-    // no query params means no results
-    const list0 = await seneca.entity('foo/chunk').list$()
-    expect(0 === list0.length)
+    beforeAll(async () => {
+      mf = await makeMiniflare()
+      const binding = await mf.getKVNamespace('TEST_KV')
 
-    const list1 = await seneca.entity('foo/chunk').list$({ test: 'insert-remove' })
-    // console.log(list1)
+      seneca = Seneca({ legacy: false })
+        .test()
+        .use('promisify')
+        .use('entity')
+        .use(CloudflareKVStore, { kv: { binding } })
 
-    let ent0: any
-
-    if (0 === list1.length) {
-      ent0 = await seneca.entity('foo/chunk')
-        .make$()
-        .data$({
-          test: 'insert-remove',
-          text: 't01',
-          vector: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-          directive$: { vector$: true },
-        })
-        .save$()
-      expect(ent0).toMatchObject({ test: 'insert-remove' })
-      await new Promise((r) => setTimeout(r, 2222))
-    }
-    else {
-      ent0 = list1[0]
-    }
-
-    await seneca.entity('foo/chunk').remove$(ent0.id)
-
-    await new Promise((r) => setTimeout(r, 2222))
-
-    const list2 = await seneca.entity('foo/chunk').list$({ test: 'insert-remove' })
-    // console.log(list2)
-    expect(list2.filter((n: any) => n.id === ent0.id)).toEqual([])
-  }, 22222)
-
-
-  test('vector-cat', async () => {
-    const seneca = await makeSeneca()
-    await seneca.ready()
-
-    // const list0 = await seneca.entity('foo/chunk').list$({ test: 'vector-cat' })
-    // console.log('list0', list0)
-
-    // NOT AVAILABLE ON AWS
-    // await seneca.entity('foo/chunk').remove$({ all$: true, test: 'vector-cat' })
-
-    const list1 = await seneca.entity('foo/chunk').list$({ test: 'vector-cat' })
-    // console.log('list1', list1)
-
-    /*
-    for (let i = 0; i < list1.length; i++) {
-      await list1[i].remove$()
-    }
-
-    await new Promise((r) => setTimeout(r, 2222))
-
-    const list1r = await seneca.entity('foo/chunk').list$({ test: 'vector-cat' })
-    // console.log('list1r', list1r)
-    */
-
-    if (!list1.find((n: any) => 'code0' === n.code)) {
-      await seneca.entity('foo/chunk')
-        .make$()
-        .data$({
-          code: 'code0',
-          test: 'vector-cat',
-          text: 't01',
-          vector: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
-          directive$: { vector$: true },
-        })
-        .save$()
-    }
-
-    if (!list1.find((n: any) => 'code1' === n.code)) {
-      await seneca.entity('foo/chunk')
-        .make$()
-        .data$({
-          code: 'code1',
-          test: 'vector-cat',
-          text: 't01',
-          vector: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
-          directive$: { vector$: true },
-        })
-        .save$()
-    }
-
-    await new Promise((r) => setTimeout(r, 2222))
-
-    const list2 = await seneca.entity('foo/chunk').list$({
-      directive$: { vector$: { k: 2 } },
-      vector: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+      await seneca.ready()
     })
-    // console.log('list2', list2.map((n: any) => ({ ...n })))
-    expect(1 < list2.length).toEqual(true)
 
-    const list3 = await seneca.entity('foo/chunk').list$({
-      directive$: { vector$: { k: 2 } },
-      vector: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
-      code: 'code0'
+    afterAll(async () => {
+      await mf.dispose()
     })
-    // console.log('list3', list3.map((n: any) => ({ ...n })))
-    expect(list3.length).toEqual(1)
 
-  }, 22222)
+    test('save and load by id', async () => {
+      const foo = await seneca.entity('foo/bar').data$({ x: 1, y: 'a' }).save$()
 
+      expect(foo.id).toBeDefined()
+      expect(foo).toMatchObject({ x: 1, y: 'a' })
 
+      const loaded = await seneca.entity('foo/bar').load$(foo.id)
+      expect(loaded).toMatchObject({ id: foo.id, x: 1, y: 'a' })
+    })
 
+    test('load missing returns null', async () => {
+      const loaded = await seneca.entity('foo/bar').load$('not-an-id')
+      expect(loaded).toEqual(null)
+    })
+
+    test('list, sort, skip and limit', async () => {
+      for (let i = 0; i < 5; i++) {
+        await seneca.entity('foo/chunk').data$({ test: 'list01', n: i }).save$()
+      }
+
+      const all = await seneca.entity('foo/chunk').list$({ test: 'list01' })
+
+      expect(all.length).toEqual(5)
+
+      const sorted = await seneca.entity('foo/chunk').list$({
+        test: 'list01',
+        sort$: { n: 1 },
+      })
+      expect(sorted.map((n: any) => n.n)).toEqual([0, 1, 2, 3, 4])
+
+      const sortedDesc = await seneca.entity('foo/chunk').list$({
+        test: 'list01',
+        sort$: { n: -1 },
+      })
+      expect(sortedDesc.map((n: any) => n.n)).toEqual([4, 3, 2, 1, 0])
+
+      const page = await seneca.entity('foo/chunk').list$({
+        test: 'list01',
+        sort$: { n: 1 },
+        skip$: 1,
+        limit$: 2,
+      })
+      expect(page.map((n: any) => n.n)).toEqual([1, 2])
+    })
+
+    test('list with fields$', async () => {
+      const ent = await seneca
+        .entity('foo/field')
+        .data$({ test: 'fields01', a: 1, b: 2 })
+        .save$()
+
+      const list = await seneca.entity('foo/field').list$({
+        test: 'fields01',
+        fields$: ['a'],
+      })
+
+      expect(list.length).toEqual(1)
+      expect(list[0]).toMatchObject({ id: ent.id, a: 1 })
+      expect(list[0].b).toBeUndefined()
+    })
+
+    test('remove by id', async () => {
+      const ent = await seneca.entity('foo/bar').data$({ x: 9 }).save$()
+
+      await seneca.entity('foo/bar').remove$(ent.id)
+
+      const loaded = await seneca.entity('foo/bar').load$(ent.id)
+      expect(loaded).toEqual(null)
+    })
+
+    test('remove with all$', async () => {
+      for (let i = 0; i < 3; i++) {
+        await seneca
+          .entity('foo/rmall')
+          .data$({ test: 'rmall01', n: i })
+          .save$()
+      }
+
+      await seneca.entity('foo/rmall').remove$({ test: 'rmall01', all$: true })
+
+      const list = await seneca.entity('foo/rmall').list$({ test: 'rmall01' })
+      expect(list).toEqual([])
+    })
+  })
+
+  describe('makeRestClient', () => {
+    const makeRestClient = CloudflareKVStore['utils'].makeRestClient
+
+    const cf = {
+      accountId: 'acc01',
+      apiToken: 'tok01',
+      namespaceId: 'ns01',
+      baseUrl: 'https://example.test/client/v4',
+    }
+
+    let fetchMock: jest.Mock
+
+    beforeEach(() => {
+      fetchMock = jest.fn()
+      ;(global as any).fetch = fetchMock
+    })
+
+    test('get found', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => '{"id":"i0"}',
+      })
+
+      const client = makeRestClient(cf)
+      const value = await client.get('foo/bar/i0')
+
+      expect(value).toEqual('{"id":"i0"}')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://example.test/client/v4/accounts/acc01/storage/kv/' +
+          'namespaces/ns01/values/foo%2Fbar%2Fi0',
+        { headers: { Authorization: 'Bearer tok01' } },
+      )
+    })
+
+    test('get not found', async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 404 })
+
+      const client = makeRestClient(cf)
+      const value = await client.get('foo/bar/missing')
+
+      expect(value).toEqual(null)
+    })
+
+    test('list', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          result: [{ name: 'foo/bar/i0' }, { name: 'foo/bar/i1' }],
+          result_info: { cursor: '' },
+        }),
+      })
+
+      const client = makeRestClient(cf)
+      const res = await client.list({ prefix: 'foo/bar/' })
+
+      expect(res.keys).toEqual([{ name: 'foo/bar/i0' }, { name: 'foo/bar/i1' }])
+      expect(res.list_complete).toEqual(true)
+    })
+  })
 })
 
-
-function makeSeneca() {
-  return Seneca({ legacy: false })
-    .test()
-    .use('promisify')
-    .use('entity')
-    .use(OpensearchStore, {
-      map: {
-        'foo/chunk': '*'
-      },
-      index: {
-        exact: process.env.SENECA_OPENSEARCH_TEST_INDEX,
-      },
-      opensearch: {
-        node: process.env.SENECA_OPENSEARCH_TEST_NODE,
-      }
-    })
+async function makeMiniflare() {
+  return new Miniflare({
+    modules: true,
+    script: 'export default { fetch() { return new Response("ok") } }',
+    kvNamespaces: ['TEST_KV'],
+  })
 }
-
-
-const index_test01 = {
-  "mappings": {
-    "properties": {
-      "text": { "type": "text" },
-      "vector": {
-        "type": "knn_vector",
-        "dimension": 8, // 1536,
-        "method": {
-          "engine": "nmslib",
-          "space_type": "cosinesimil",
-          "name": "hnsw",
-          "parameters": { "ef_construction": 512, "m": 16 }
-        }
-      }
-    }
-  },
-  "settings": {
-    "index": {
-      "number_of_shards": 2,
-      "knn.algo_param": { "ef_search": 512 },
-      "knn": true
-    }
-  }
-}
-
-
-/*
-  [
-  {
-    "Rules": [
-      {
-        "Resource": [
-          "collection/podmind03a"
-        ],
-        "Permission": [
-          "aoss:CreateCollectionItems",
-          "aoss:DeleteCollectionItems",
-          "aoss:UpdateCollectionItems",
-          "aoss:DescribeCollectionItems"
-        ],
-        "ResourceType": "collection"
-      },
-      {
-        "Resource": [
-          "index/podmind03a/*"
-        ],
-        "Permission": [
-          "aoss:CreateIndex",
-          "aoss:DeleteIndex",
-          "aoss:UpdateIndex",
-          "aoss:DescribeIndex",
-          "aoss:ReadDocument",
-          "aoss:WriteDocument"
-        ],
-        "ResourceType": "index"
-      }
-    ],
-    "Principal": [
-      "arn:aws:iam::...:role/...LambdaRole..."
-    ],
-    "Description": "Easy data policy"
-  }
-]
-  */
