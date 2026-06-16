@@ -176,7 +176,7 @@ describe('CloudflareKVStore', () => {
 
     beforeEach(() => {
       fetchMock = jest.fn()
-      ;(global as any).fetch = fetchMock
+        ; (global as any).fetch = fetchMock
     })
 
     test('get found', async () => {
@@ -192,7 +192,7 @@ describe('CloudflareKVStore', () => {
       expect(value).toEqual('{"id":"i0"}')
       expect(fetchMock).toHaveBeenCalledWith(
         'https://example.test/client/v4/accounts/acc01/storage/kv/' +
-          'namespaces/ns01/values/foo%2Fbar%2Fi0',
+        'namespaces/ns01/values/foo%2Fbar%2Fi0',
         { headers: { Authorization: 'Bearer tok01' } },
       )
     })

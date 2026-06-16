@@ -337,16 +337,10 @@ function makeRestClient(cf: CloudflareConfig): KVClient {
     async list(opts: { prefix?: string; cursor?: string; limit?: number }) {
       const params = new URLSearchParams()
 
-      if (null != opts.prefix) {
-        params.set('prefix', opts.prefix)
-      }
-
-      if (null != opts.cursor) {
-        params.set('cursor', opts.cursor)
-      }
-
-      if (null != opts.limit) {
-        params.set('limit', String(opts.limit))
+      for (const [key, val] of Object.entries(opts)) {
+        if (null != val) {
+          params.set(key, String(val))
+        }
       }
 
       const res = await fetch(`${base}/keys?${params.toString()}`, {
@@ -393,7 +387,7 @@ const defaults: Options = {
     accountId: '',
     apiToken: '',
     namespaceId: '',
-    baseUrl: 'https://api.cloudflare.com/client/v4',
+    baseUrl: 'https://api.cloudflare.com/client/v4',  // Default base URL for Cloudflare API
   }),
 }
 
