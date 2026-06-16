@@ -75,18 +75,18 @@ function CloudflareKVStore(this: any, options: Options) {
       client
         .put(key, JSON.stringify(data))
         .then(() => {
-          ent.id = id
-          reply(ent)
+          const ento = ent.make$().data$(data)
+          reply(null, ento)
         })
         .catch((err: any) => reply(err))
     },
 
     load: function (this: any, msg: any, reply: any) {
-      const ent = msg.ent
+      const qent = msg.qent
       const q = msg.q || {}
 
       if (null != q.id) {
-        const key = resolveKey(ent, q.id, options)
+        const key = resolveKey(qent, q.id, options)
 
         client
           .get(key)
@@ -96,29 +96,28 @@ function CloudflareKVStore(this: any, options: Options) {
             }
 
             const data = JSON.parse(raw)
-            ent.data$(data)
-            ent.id = data.id
-            reply(ent)
+            const ento = qent.make$().data$(data)
+            reply(null, ento)
           })
           .catch((err: any) => reply(err))
       } else {
-        listEntities(ent, { ...q, limit$: 1 }, options, client)
-          .then((list: any[]) => reply(list[0] || null))
+        listEntities(qent, { ...q, limit$: 1 }, options, client)
+          .then((list: any[]) => reply(null, list[0] || null))
           .catch((err: any) => reply(err))
       }
     },
 
     list: function (this: any, msg: any, reply: any) {
-      const ent = msg.ent
+      const qent = msg.qent
       const q = msg.q || {}
 
-      listEntities(ent, q, options, client)
-        .then((list: any[]) => reply(list))
+      listEntities(qent, q, options, client)
+        .then((list: any[]) => reply(null, list))
         .catch((err: any) => reply(err))
     },
 
     remove: function (this: any, msg: any, reply: any) {
-      const ent = msg.ent
+      const ent = msg.ent || msg.qent
       const q = msg.q || {}
 
       if (null != q.id) {
@@ -163,19 +162,18 @@ function CloudflareKVStore(this: any, options: Options) {
 
   desc = meta.desc
 
-  seneca.prepare(async function (this: any) {
+  seneca.add({ init: store.name, tag: meta.tag }, function (this: any, _msg: any, reply: any) {
     client = options.kv.binding
       ? (options.kv.binding as KVClient)
       : makeRestClient(options.cloudflare as CloudflareConfig)
+    reply()
   })
 
   return {
     name: store.name,
     tag: meta.tag,
-    exportmap: {
-      native: () => {
-        return { client }
-      },
+    exports: {
+      native: () => ({ client }),
     },
   }
 }
