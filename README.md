@@ -1,12 +1,9 @@
 ![Seneca](http://senecajs.org/files/assets/seneca-logo.png)
 > A [Seneca.js][] data storage plugin.
 
-# SenecaOpensearchStore
+# SenecaCloudflareKVStore
 [![npm version][npm-badge]][npm-url]
-[![Build](https://github.com/senecajs/SenecaOpensearchStore/actions/workflows/build.yml/badge.svg)](https://github.com/senecajs/seneca-OpensearchStore/actions/workflows/build.yml)
-[![Dependency Status][david-badge]][david-url]
-[![Maintainability](https://api.codeclimate.com/v1/badges/e2cdcc5415161cb378b0/maintainability)](https://codeclimate.com/github/senecajs/SenecaOpensearchStore/maintainability)
-[![DeepScan grade](https://deepscan.io/api/teams/5016/projects/17225/branches/388415/badge/grade.svg)](https://deepscan.io/dashboard#view=project&tid=5016&pid=17225&bid=388415)
+[![Build](https://github.com/senecajs/SenecaCloudflareKVStore/actions/workflows/build.yml/badge.svg)](https://github.com/senecajs/SenecaCloudflareKVStore/actions/workflows/build.yml)
 [![Coveralls][BadgeCoveralls]][Coveralls]
 
 
@@ -17,17 +14,13 @@
 
 ## Description
 
-This module is a plugin for the Seneca framework. It provides an
-in-memory storage engine that provides a set of data storage action
-patterns. *Data does not persist betweens runs*.  This plugin is most
-useful for early development and unit testing. It also provides an
-example of a document-oriented storage plugin code-base.
+This module is a plugin for the Seneca framework. It provides a
+Seneca data entity storage engine backed by [Cloudflare Workers
+KV][], a globally distributed key-value store.
 
 The Seneca framework provides an [ActiveRecord-style data storage API][].
 Each supported database has a plugin, such as this one, that provides
 the underlying Seneca plugin actions required for data persistence.
-
-This plugin is loaded by default by the [seneca-entity][seneca-entity-url] plugin that also needs the [seneca-basic][seneca-basic-url] plugin to function properly.
 
 If you're using this module, and need help, you can:
 
@@ -41,20 +34,18 @@ tutorials to sample apps to help get you up and running quickly.
 
 ## Code examples
 
-For code samples, please see the [tests][OpensearchStore-tests] for this plugin.
+For code samples, please see the [tests][CloudflareKVStore-tests] for this plugin.
 
 ### Seneca compatibility
-Supports Seneca versions **2.x** and above
+Supports Seneca versions **3.x** and above
 
-
-### Supported functionality
-All Seneca data store supported functionality is implemented in [seneca-store-test](https://github.com/senecajs/seneca-store-test) as a test suite. The tests represent the store functionality specifications.
 
 ## Install
 
 ```sh
 npm install seneca
-npm install SenecaOpensearchStore
+npm install seneca-entity
+npm install @seneca/cloudflare-kv-store
 ```
 
 You'll need the [seneca](http://github.com/senecajs/seneca) toolkit to use this module - it's just a plugin.
@@ -62,21 +53,25 @@ You'll need the [seneca](http://github.com/senecajs/seneca) toolkit to use this 
 ## Quick Example
 
 ```js
-var seneca = require('seneca')()
+const seneca = require('seneca')()
 
-seneca.use('basic')
-.use('entity')
-
-// Since OpensearchStore is a default plugin, it does not need to be
-// added with .use(). You can just go ahead and use it.
-seneca.ready(function () {
-  var apple = seneca.make$('fruit')
-  apple.name = 'Pink Lady'
-  apple.price = 0.99
-
-  apple.save$(function (err, apple) {
-    console.log("apple.id = " + apple.id)
+seneca
+  .use('promisify')
+  .use('entity')
+  .use('@seneca/cloudflare-kv-store', {
+    // Use a Cloudflare Workers KV binding directly (e.g. inside a
+    // Worker, or a binding from Miniflare/wrangler in dev/test).
+    kv: {
+      binding: MY_KV_NAMESPACE,
+    },
   })
+
+seneca.ready(async function () {
+  const apple = await seneca.entity('fruit')
+    .data$({ name: 'Pink Lady', price: 0.99 })
+    .save$()
+
+  console.log('apple.id = ' + apple.id)
 })
 ```
 
@@ -93,6 +88,52 @@ entity.load$({id: ... }, function (err, entity) { ... })
 entity.list$({property: ... }, function (err, entity) { ... })
 entity.remove$({id: ... }, function (err, entity) { ... })
 ```
+
+## Options
+
+### `kv.binding`
+
+A [`KVNamespace`][] binding, as provided to a Cloudflare Worker (or by
+[Miniflare](https://miniflare.dev) / `wrangler` in local development
+and tests). When set, this binding is used directly and the
+`cloudflare` REST options below are ignored.
+
+```js
+.use('@seneca/cloudflare-kv-store', {
+  kv: { binding: env.MY_KV_NAMESPACE },
+})
+```
+
+### `cloudflare`
+
+When no `kv.binding` is provided, the plugin talks to Workers KV over
+the [Cloudflare REST API][], for use outside a Worker (e.g. a Node.js
+server or script):
+
+```js
+.use('@seneca/cloudflare-kv-store', {
+  cloudflare: {
+    accountId: '...',
+    apiToken: '...',
+    namespaceId: '...',
+  },
+})
+```
+
+### `prefix` / `suffix` / `map`
+
+Control how an entity's canon (`zone/base/name`) is mapped to a KV key
+prefix, e.g. entity `foo/bar` with id `i0` is stored under key
+`foo/bar/i0` by default. `prefix`/`suffix` add fixed segments, and
+`map` provides an exact override per canon string (e.g. `{'-/foo/bar':
+'custom-prefix'}`).
+
+### `cmd.list.size` / `cmd.list.maxScan`
+
+`cmd.list.size` (default `11`) is the default result count for
+`list$` when `limit$` is not given. `cmd.list.maxScan` (default
+`1000`) caps how many keys under a canon's prefix are scanned to
+answer a `list$`/`load$`/`remove$` query (see below).
 
 ### Query Support
 The standard Seneca query format is supported:
@@ -111,8 +152,17 @@ The standard Seneca query format is supported:
 
 Note: you can use `sort$`, `limit$`, `skip$` and `fields$` together.
 
+**Limitation:** Workers KV has no native query support. To answer a
+`list$` query, this plugin lists all keys under the entity canon's
+prefix (up to `cmd.list.maxScan`), fetches each value, and then
+filters, sorts and paginates in memory. This is fine for small to
+moderate collections, but is not suitable for large datasets — for
+those, consider [@seneca/cloudflare-d1-store][] instead.
+
 ### Native Driver
-This store is an in memory store and as such does not require the need of a native driver.
+The `native` action exposes the underlying KV client (either the
+`KVNamespace` binding, or the REST client), via
+`seneca.export('CloudflareKVStore/native')`.
 
 ## Contributing
 The [Senecajs org][] encourages open participation. If you feel you can help in any way, be it with
@@ -125,28 +175,29 @@ To run tests, simply use npm:
 npm run test
 ```
 
+Tests run against a local Workers KV namespace provided by
+[Miniflare](https://miniflare.dev) — no Cloudflare account or
+credentials are required.
+
 ## License
-Copyright (c) 2015-2016, Richard Rodger and other contributors.
-Copyright (c) 2010-2014, Richard Rodger.
+Copyright (c) 2024-2026, Richard Rodger and other contributors.
 Licensed under [MIT][].
 
 [MIT]: ./LICENSE
-[npm-badge]: https://badge.fury.io/js/SenecaOpensearchStore.svg
-[npm-url]: https://badge.fury.io/js/SenecaOpensearchStore
+[npm-badge]: https://badge.fury.io/js/@seneca%2Fcloudflare-kv-store.svg
+[npm-url]: https://badge.fury.io/js/@seneca%2Fcloudflare-kv-store
 [Senecajs org]: https://github.com/senecajs/
 [Seneca.js]: https://www.npmjs.com/package/seneca
 [@senecajs]: http://twitter.com/senecajs
 [senecajs.org]: http://senecajs.org/
-[travis-badge]: https://travis-ci.org/senecajs/SenecaOpensearchStore.svg
-[travis-url]: https://travis-ci.org/senecajs/SenecaOpensearchStore
 [gitter-badge]: https://badges.gitter.im/Join%20Chat.svg
 [gitter-url]: https://gitter.im/senecajs/seneca
-[github issue]: https://github.com/senecajs/SenecaOpensearchStore/issues
+[github issue]: https://github.com/senecajs/SenecaCloudflareKVStore/issues
 [ActiveRecord-style data storage API]:http://senecajs.org/tutorials/understanding-data-entities.html
-[david-badge]: https://david-dm.org/senecajs/SenecaOpensearchStore.svg
-[david-url]: https://david-dm.org/senecajs/SenecaOpensearchStore
-[Coveralls]: https://coveralls.io/github/senecajs/SenecaOpensearchStore?branch=master
-[BadgeCoveralls]: https://coveralls.io/repos/github/senecajs/SenecaOpensearchStore/badge.svg?branch=master
-[seneca-basic-url]: https://github.com/senecajs/seneca-basic
-[seneca-entity-url]: https://github.com/senecajs/seneca-entity
-[OpensearchStore-tests]: https://github.com/senecajs/SenecaOpensearchStore/tree/master/test
+[Coveralls]: https://coveralls.io/github/senecajs/SenecaCloudflareKVStore?branch=main
+[BadgeCoveralls]: https://coveralls.io/repos/github/senecajs/SenecaCloudflareKVStore/badge.svg?branch=main
+[CloudflareKVStore-tests]: https://github.com/senecajs/SenecaCloudflareKVStore/tree/main/test
+[Cloudflare Workers KV]: https://developers.cloudflare.com/kv/
+[Cloudflare REST API]: https://developers.cloudflare.com/api/operations/workers-kv-namespace-write-key-value-pair
+[`KVNamespace`]: https://developers.cloudflare.com/kv/api/
+[@seneca/cloudflare-d1-store]: https://github.com/senecajs/SenecaCloudflareD1Store
