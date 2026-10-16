@@ -1,6 +1,6 @@
 {
   "name": "@seneca/cloudflare-kv-store",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Seneca Cloudflare KV Store data storage plugin.",
   "main": "dist/CloudflareKVStore.js",
   "type": "commonjs",
@@ -64,5 +64,12 @@
     "LICENSE",
     "src",
     "dist"
-  ]
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }
