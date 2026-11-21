@@ -37,15 +37,13 @@ tutorials to sample apps to help get you up and running quickly.
 For code samples, please see the [tests][CloudflareKVStore-tests] for this plugin.
 
 ### Seneca compatibility
-Supports Seneca versions **3.x** and above
+Supports Seneca **4.x**, with `@seneca/entity` 29.x, on Node.js 24 or later.
 
 
 ## Install
 
 ```sh
-npm install seneca
-npm install seneca-entity
-npm install @seneca/cloudflare-kv-store
+npm install seneca@^4 @seneca/entity @seneca/cloudflare-kv-store
 ```
 
 You'll need the [seneca](http://github.com/senecajs/seneca) toolkit to use this module - it's just a plugin.
@@ -56,8 +54,7 @@ You'll need the [seneca](http://github.com/senecajs/seneca) toolkit to use this 
 const seneca = require('seneca')()
 
 seneca
-  .use('promisify')
-  .use('entity')
+  .use('@seneca/entity')
   .use('@seneca/cloudflare-kv-store', {
     // Use a Cloudflare Workers KV binding directly (e.g. inside a
     // Worker, or a binding from Miniflare/wrangler in dev/test).
@@ -119,6 +116,11 @@ server or script):
   },
 })
 ```
+
+### `generate_id`
+
+A function `(ent) => id` for new entities. The default returns
+`undefined`, which means that the entity plugin generates the id.
 
 ### `prefix` / `suffix` / `map`
 
